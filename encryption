@@ -1,0 +1,152 @@
+#include <gtk/gtk.h>
+#include <openssl/aes.h>
+#include <openssl/rand.h>
+#include <string.h>
+
+#define AES_KEYLENGTH 256
+#define AES_BLOCK_SIZE 16
+
+// Global variables
+static GtkWidget *entry_key;
+static GtkWidget *entry_text;
+static GtkWidget *textview_output;
+
+// Function prototypes
+void handleErrors(void);
+void AES_encrypt(const unsigned char *input, unsigned char *output, const unsigned char *key);
+void AES_decrypt(const unsigned char *input, unsigned char *output, const unsigned char *key);
+void on_encrypt_button_clicked(GtkButton *button, gpointer user_data);
+void on_decrypt_button_clicked(GtkButton *button, gpointer user_data);
+void update_output(const char *text);
+void setup_ui(GtkApplication *app);
+
+int main(int argc, char **argv) {
+    GtkApplication *app;
+    app = gtk_application_new("com.example.AESCipher", G_APPLICATION_FLAGS_NONE);
+    g_signal_connect(app, "activate", G_CALLBACK(setup_ui), NULL);
+    return g_application_run(G_APPLICATION(app), argc, argv);
+}
+
+void setup_ui(GtkApplication *app) {
+    GtkWidget *window;
+    GtkWidget *grid;
+    GtkWidget *label_key;
+    GtkWidget *label_text;
+    GtkWidget *button_encrypt;
+    GtkWidget *button_decrypt;
+    
+    window = gtk_application_window_new(app);
+    gtk_window_set_title(GTK_WINDOW(window), "AES Cipher");
+    gtk_window_set_default_size(GTK_WINDOW(window), 400, 300);
+
+    grid = gtk_grid_new();
+    gtk_container_add(GTK_CONTAINER(window), grid);
+
+    label_key = gtk_label_new("Key (32 bytes):");
+    gtk_grid_attach(GTK_GRID(grid), label_key, 0, 0, 1, 1);
+
+    entry_key = gtk_entry_new();
+    gtk_entry_set_max_length(GTK_ENTRY(entry_key), AES_KEYLENGTH / 8);
+    gtk_grid_attach(GTK_GRID(grid), entry_key, 1, 0, 1, 1);
+
+    label_text = gtk_label_new("Text:");
+    gtk_grid_attach(GTK_GRID(grid), label_text, 0, 1, 1, 1);
+
+    entry_text = gtk_entry_new();
+    gtk_grid_attach(GTK_GRID(grid), entry_text, 1, 1, 1, 1);
+
+    button_encrypt = gtk_button_new_with_label("Encrypt");
+    g_signal_connect(button_encrypt, "clicked", G_CALLBACK(on_encrypt_button_clicked), NULL);
+    gtk_grid_attach(GTK_GRID(grid), button_encrypt, 0, 2, 1, 1);
+
+    button_decrypt = gtk_button_new_with_label("Decrypt");
+    g_signal_connect(button_decrypt, "clicked", G_CALLBACK(on_decrypt_button_clicked), NULL);
+    gtk_grid_attach(GTK_GRID(grid), button_decrypt, 1, 2, 1, 1);
+
+    textview_output = gtk_text_view_new();
+    gtk_text_view_set_editable(GTK_TEXT_VIEW(textview_output), FALSE);
+    gtk_grid_attach(GTK_GRID(grid), textview_output, 0, 3, 2, 1);
+
+    gtk_widget_show_all(window);
+}
+
+void on_encrypt_button_clicked(GtkButton *button, gpointer user_data) {
+    const gchar *key = gtk_entry_get_text(GTK_ENTRY(entry_key));
+    const gchar *text = gtk_entry_get_text(GTK_ENTRY(entry_text));
+    unsigned char key_bytes[AES_KEYLENGTH / 8];
+    unsigned char input[AES_BLOCK_SIZE * 4];  // Assuming max input size
+    unsigned char output[AES_BLOCK_SIZE * 4];
+    size_t text_len, padded_len;
+    int i;
+
+    // Convert key to bytes
+    strncpy((char *)key_bytes, key, sizeof(key_bytes));
+
+    // Pad and copy input text
+    text_len = strlen(text);
+    padded_len = ((text_len / AES_BLOCK_SIZE) + 1) * AES_BLOCK_SIZE;
+    memset(input, 0, padded_len);
+    memcpy(input, text, text_len);
+
+    AES_encrypt(input, output, key_bytes);
+    
+    // Output encrypted text as hex
+    char hex_output[padded_len * 2 + 1];
+    for (i = 0; i < padded_len; ++i) {
+        sprintf(&hex_output[i * 2], "%02x", output[i]);
+    }
+    hex_output[padded_len * 2] = '\0';
+
+    update_output(hex_output);
+}
+
+void on_decrypt_button_clicked(GtkButton *button, gpointer user_data) {
+    const gchar *key = gtk_entry_get_text(GTK_ENTRY(entry_key));
+    const gchar *text = gtk_entry_get_text(GTK_ENTRY(entry_text));
+    unsigned char key_bytes[AES_KEYLENGTH / 8];
+    unsigned char input[AES_BLOCK_SIZE * 4];
+    unsigned char output[AES_BLOCK_SIZE * 4];
+    size_t input_len, i;
+
+    // Convert key to bytes
+    strncpy((char *)key_bytes, key, sizeof(key_bytes));
+
+    // Convert hex input to bytes
+    input_len = strlen(text) / 2;
+    for (i = 0; i < input_len; ++i) {
+        sscanf(&text[i * 2], "%2hhx", &input[i]);
+    }
+
+    AES_decrypt(input, output, key_bytes);
+
+    // Remove padding (assumed zero-padding)
+    for (i = input_len - 1; i >= 0; --i) {
+        if (output[i] != 0) break;
+    }
+    output[i + 1] = '\0';
+
+    update_output((char *)output);
+}
+
+void AES_encrypt(const unsigned char *input, unsigned char *output, const unsigned char *key) {
+    AES_KEY enc_key;
+    AES_set_encrypt_key(key, AES_KEYLENGTH, &enc_key);
+    AES_encrypt(input, output, &enc_key);
+}
+
+void AES_decrypt(const unsigned char *input, unsigned char *output, const unsigned char *key) {
+    AES_KEY dec_key;
+    AES_set_decrypt_key(key, AES_KEYLENGTH, &dec_key);
+    AES_decrypt(input, output, &dec_key);
+}
+
+void update_output(const char *text) {
+    GtkTextBuffer *buffer;
+    buffer = gtk_text_view_get_buffer(GTK_TEXT_VIEW(textview_output));
+    gtk_text_buffer_set_text(buffer, text, -1);
+}
+
+void handleErrors(void) {
+    fprintf(stderr, "An error occurred.\n");
+    exit(1);
+}
